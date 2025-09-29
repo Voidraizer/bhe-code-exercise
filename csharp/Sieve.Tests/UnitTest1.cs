@@ -20,7 +20,8 @@ namespace Sieve.Tests
             Assert.AreEqual( 1299709, sieve.NthPrime( 99999 ) );
             Assert.AreEqual( 15485867, sieve.NthPrime( 1000000 ) );
             Assert.AreEqual( 179424691, sieve.NthPrime( 10000000 ) );
-            //Assert.AreEqual( 2038074751, sieve.NthPrime(100000000)); not required, just a fun challenge
+            Assert.AreEqual( 1189457257, sieve.NthPrime( 59950298 ) ); // max version 1 can handle before int overflow
+            //Assert.AreEqual( 2038074751, sieve.NthPrime( 100000000 ) ); // not required, just a fun challenge
         }
     }
 }
