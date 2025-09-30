@@ -19,9 +19,6 @@ public class SieveImplementation : ISieve
     /// <summary>
     /// Version 2.0<br/>
     /// This version is intended to handle exceptionally large nth primes without requiring 128-bit integers.
-    /// <para>
-    /// https://en.wikipedia.org/wiki/Prime_number_theorem#Statement states that the nth prime is approximately nlog(n). So let's take that value and double it to ensure it contains the nth prime
-    /// </para>
     /// </summary>
     public long NthPrime( long n )
     {
