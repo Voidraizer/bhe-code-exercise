@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -17,53 +18,84 @@ public class SieveImplementation : ISieve
     private static readonly List<string> suffixes = new List<string> { "th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th" };
 
     /// <summary>
-    /// Version 2.0<br/>
-    /// This version is intended to handle exceptionally large nth primes without requiring 128-bit integers.
+    /// Version 3.0 (Best Version)<br/>
+    /// <para>
+    /// The best version is intended to handle exceptionally large nth primes without requiring 128-bit integers and parallelize it so it can find very large ones quickly. The idea is that every prime we find, we have to mark off multiples of it up to the estimated limit to eliminate all composites. The trick is that we only need to do this for primes up to the square root of the limit. Beyond that, all multiples will have already been marked off by smaller primes. Therefore, once we reach the square root of the limit, we now have all the numbers that will be used to mark off composites. The remainder of the work can be split into chunks and processed in parallel because for any new primes we find, we won't need to mark off their multiples in that chunk or any other anymore which effectively means each chunk is completely independent of the others. This then makes it a perfect candidate for parallelization.
+    /// </para>
     /// </summary>
     public long NthPrime( long n )
     {
         if( n < 0 )
-        {
             throw new ArgumentOutOfRangeException( nameof( n ), "n must be 0 or greater" );
-        }
-        else if( n == 0 )
+        if( n == 0 )
         {
             Debug.Print( $"Found the first prime: 2" );
             return 2;
         }
 
-        int chunkSize = 100000000; // 100 million - *must be even*
-        // Even though we're potentially getting to ridiculously far out there primes, the total count of the primes shoudln't exceed 32-bit integer limits
-        // because, according to the prime number theorem, the further out you go, the less frequent primes become
-        List<long> primes = new List<long>() { 2 };
+        int chunkSize = 100_000_000; // 100 million, must be even
         long limit = n < 14 ? 45 : (long)( n * Math.Log( n * Math.Log( n ) ) );
-        Debug.Print( $"Estimated Upper Limit: {limit}" );
-        int chunkCounter = 0;
+        //Debug.Print( $"Estimated Upper Limit: {limit}" );
 
-        for( long chunkStart = 0; chunkStart < limit; chunkStart += chunkSize )
+        List<long> primes = new List<long> { 2 };
+        // We add 1 to ensure the range is inclusive
+        long sqrtLimit = (long)Math.Sqrt( limit ) + 1;
+
+        // Again must add 1 to ensure inclusivity. This way we can mark all numbers from 1 to the sqrtLimit, including the sqrtLimit
+        bool[] smallIsPrime = new bool[sqrtLimit + 1];
+
+        for( int i = 3; i <= sqrtLimit; i += 2 )
         {
-            chunkCounter++;
-            // Make sure we don't exceed the overall limit on the last chunk
+            smallIsPrime[i] = true;
+        }
+
+        for( int i = 3; i * i <= sqrtLimit; i += 2 )
+        {
+            if( smallIsPrime[i] )
+            {
+                for( int j = i * i; j <= sqrtLimit; j += ( 2 * i ) )
+                {
+                    smallIsPrime[j] = false;
+                }
+            }
+        }
+
+        List<long> smallPrimes = new List<long>() { 2 };
+
+        for( int i = 3; i <= sqrtLimit; i += 2 )
+        {
+            if( smallIsPrime[i] )
+            {
+                smallPrimes.Add( i );
+            }
+        }
+
+        // Now we have all of the primes who will be used to mark off composites in the chunks to follow
+        // To get the chunkCount, the math is the same as 75% of the maath for getting the smallest multiple of a prime inside the current chunk. See below for that large comment explanation
+        int chunkCount = (int)( ( limit + chunkSize - 1 ) / chunkSize );
+        var foundPrimes = new List<long>[chunkCount];
+
+        for( int i = 0; i < chunkCount; i++ )
+        {
+            foundPrimes[i] = new List<long>();
+        }
+
+        foundPrimes[0].Add( 2 );
+
+        Parallel.For( 0, chunkCount, chunkIdx =>
+        {
+            long chunkStart = chunkIdx * (long)chunkSize;
             int size = (int)Math.Min( chunkSize, limit - chunkStart );
-            Debug.Print( $"Starting {chunkCounter}{( ( chunkCounter ) == 11 ? "th" : suffixes[chunkCounter % 10] )} chunk - ChunkStart: {chunkStart}, ChunkSize: {size}" );
             bool[] isPrime = new bool[size];
 
-            // Start at 1 and increment by 2 to only hit odds
+            // Mark odds as true
             for( int i = 1; i < size; i += 2 )
             {
                 isPrime[i] = true;
             }
 
-            // First cross out all multiples of previously found primes
-            foreach( long p in primes )
+            foreach( long p in smallPrimes )
             {
-                //Debug.Print( $"Crossing out multiples of {p}" );
-
-                if( p == 2 )
-                {
-                    continue;
-                }
-
                 /*
                  * We need to find a multiple of p within the current chunk. We always want to start at with p^2 to save time, or the first multiple of p
                  * that is in the chunk if p^2 is less than chunkStart
@@ -73,65 +105,174 @@ public class SieveImplementation : ISieve
                  * * p: Multiplies back to get the actual multiple of p
                  * 
                  * Example:
-                 * If chunkStart = 103, p = 7
-                 * 103 + 7 - 1 
-                 * 109 / 7 = 15 ( integer division )
+                 * If chunkStart = 100, p = 7
+                 * 100 + 7 - 1 
+                 * 106 / 7 = 15 ( integer division )
                  * 15 * 7 = 105
                  */
-                long firstPrimeMultiple = Math.Max( p * p, ( ( chunkStart + p - 1 ) / p ) * p );
+                long first = Math.Max( p * p, ( ( chunkStart + p - 1 ) / p ) * p );
 
-                // Ensure the starting multiple is odd
-                if( firstPrimeMultiple % 2 == 0 )
+                // Ensure the starting multiple is odd because everything we do is based on using odds and adding 2 or 2*iterator to skip evens
+                if( first % 2 == 0 )
                 {
-                    firstPrimeMultiple += p;
+                    first += p;
                 }
 
-                for( long j = firstPrimeMultiple; j < chunkStart + size; j += ( 2 * p ) )
+                for( long j = first; j < chunkStart + size; j += 2 * p )
                 {
-                    if( j >= chunkStart )
-                    {
-                        isPrime[j - chunkStart] = false;
-                    }
+                    isPrime[j - chunkStart] = false;
                 }
             }
 
-            // Now we hunt for new primes
+            // Collect primes in this chunk
             for( int i = 1; i < size; i += 2 )
             {
                 long num = chunkStart + i;
 
-                if( num < 2 ) continue;
-
-                //Debug.Print( $"i: {i}, num: {num}, isPrime: {isPrime[i]}" );
+                if( num < 2 )
+                {
+                    continue;
+                }
 
                 if( isPrime[i] )
                 {
-                    primes.Add( num );
-
-                    if( primes.Count - 1 == n )
-                    {
-                        long val = n + 1;
-                        val = int.Parse( val.ToString().Substring( val.ToString().Length - 1 ) );
-                        Debug.Print( $"Found the {n + 1}{( ( n + 1 ) == 11 ? "th" : suffixes[(int)val] )} prime: {num}" );
-                        return num;
-                    }
-                    else
-                    {
-                        for( long j = num * num; j < chunkStart + size; j += ( 2 * num ) )
-                        {
-                            if( j >= chunkStart )
-                            {
-                                isPrime[j - chunkStart] = false;
-                            }
-                        }
-                    }
+                    foundPrimes[chunkIdx].Add( num );
                 }
             }
+        } );
+
+        var allPrimes = new List<long>();
+
+        for( int i = 0; i < chunkCount; i++ )
+        {
+            allPrimes.AddRange( foundPrimes[i] );
         }
 
+        if( n < allPrimes.Count )
+        {
+            long val = n + 1;
+            val = int.Parse( val.ToString().Substring( val.ToString().Length - 1 ) );
+            Debug.Print( $"Found the {n + 1}{( ( n + 1 ) == 11 ? "th" : suffixes[(int)val] )} prime: {allPrimes[(int)n]}" );
+            return allPrimes[(int)n];
+        }
 
-        return 0;
+        return -1;
     }
+
+
+    /// <summary>
+    /// Version 2.0<br/>
+    /// This version is intended to handle exceptionally large nth primes without requiring 128-bit integers.
+    /// </summary>
+    //public long NthPrime( long n )
+    //{
+    //    if( n < 0 )
+    //    {
+    //        throw new ArgumentOutOfRangeException( nameof( n ), "n must be 0 or greater" );
+    //    }
+    //    else if( n == 0 )
+    //    {
+    //        Debug.Print( $"Found the first prime: 2" );
+    //        return 2;
+    //    }
+
+    //    int chunkSize = 100_000_000; // 100 million - *must be even*
+    //    // Even though we're potentially getting to ridiculously far out there primes, the total count of the primes shoudln't exceed 32-bit integer limits
+    //    // because, according to the prime number theorem, the further out you go, the less frequent primes become
+    //    List<long> primes = new List<long>() { 2 };
+    //    long limit = n < 14 ? 45 : (long)( n * Math.Log( n * Math.Log( n ) ) );
+    //    Debug.Print( $"Estimated Upper Limit: {limit}" );
+    //    int chunkCounter = 0;
+
+    //    for( long chunkStart = 0; chunkStart < limit; chunkStart += chunkSize )
+    //    {
+    //        chunkCounter++;
+    //        // Make sure we don't exceed the overall limit on the last chunk
+    //        int size = (int)Math.Min( chunkSize, limit - chunkStart );
+    //        Debug.Print( $"Starting {chunkCounter}{( ( chunkCounter ) == 11 ? "th" : suffixes[chunkCounter % 10] )} chunk - ChunkStart: {chunkStart}, ChunkSize: {size}" );
+    //        bool[] isPrime = new bool[size];
+
+    //        // Start at 1 and increment by 2 to only hit odds
+    //        for( int i = 1; i <= size; i += 2 )
+    //        {
+    //            isPrime[i] = true;
+    //        }
+
+    //        // First cross out all multiples of previously found primes
+    //        foreach( long p in primes )
+    //        {
+    //            //Debug.Print( $"Crossing out multiples of {p}" );
+
+    //            if( p == 2 )
+    //            {
+    //                continue;
+    //            }
+
+    //            /*
+    //             * We need to find a multiple of p within the current chunk. We always want to start at with p^2 to save time, or the first multiple of p
+    //             * that is in the chunk if p^2 is less than chunkStart
+    //             * 
+    //             * chunkStart + p - 1: This ensures that if chunkStart isn’t already a multiple of p, you round up to the next multiple
+    //             * / p: Integer division, so it floors the result
+    //             * * p: Multiplies back to get the actual multiple of p
+    //             * 
+    //             * Example:
+    //             * If chunkStart = 100, p = 7
+    //             * 100 + 7 - 1 
+    //             * 106 / 7 = 15 ( integer division )
+    //             * 15 * 7 = 105
+    //             */
+    //            long firstPrimeMultiple = Math.Max( p * p, ( ( chunkStart + p - 1 ) / p ) * p );
+
+    //            // Ensure the starting multiple is odd
+    //            if( firstPrimeMultiple % 2 == 0 )
+    //            {
+    //                firstPrimeMultiple += p;
+    //            }
+
+    //            for( long j = firstPrimeMultiple; j < chunkStart + size; j += ( 2 * p ) )
+    //            {
+    //                isPrime[j - chunkStart] = false;
+    //            }
+    //        }
+
+    //        // Now we hunt for new primes
+    //        for( int i = 1; i < size; i += 2 )
+    //        {
+    //            long num = chunkStart + i;
+
+    //            if( num < 2 ) continue;
+
+    //            //Debug.Print( $"i: {i}, num: {num}, isPrime: {isPrime[i]}" );
+
+    //            if( isPrime[i] )
+    //            {
+    //                primes.Add( num );
+
+    //                if( primes.Count - 1 == n )
+    //                {
+    //                    long val = n + 1;
+    //                    val = int.Parse( val.ToString().Substring( val.ToString().Length - 1 ) );
+    //                    Debug.Print( $"Found the {n + 1}{( ( n + 1 ) == 11 ? "th" : suffixes[(int)val] )} prime: {num}" );
+    //                    return num;
+    //                }
+    //                else
+    //                {
+    //                    for( long j = num * num; j < chunkStart + size; j += ( 2 * num ) )
+    //                    {
+    //                        if( j >= chunkStart )
+    //                        {
+    //                            isPrime[j - chunkStart] = false;
+    //                        }
+    //                    }
+    //                }
+    //            }
+    //        }
+    //    }
+
+
+    //    return 0;
+    //}
 
     /// <summary>
     /// Version 1.0<br/>
