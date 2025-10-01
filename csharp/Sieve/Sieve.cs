@@ -20,7 +20,7 @@ public class SieveImplementation : ISieve
     /// <summary>
     /// Version 3.0 (Best Version)<br/>
     /// <para>
-    /// The best version is intended to handle exceptionally large nth primes without requiring 128-bit integers and parallelize it so it can find very large ones quickly. The idea is that every prime we find, we have to mark off multiples of it up to the estimated limit to eliminate all composites. The trick is that we only need to do this for primes up to the square root of the limit. Beyond that, all multiples will have already been marked off by smaller primes. Therefore, once we reach the square root of the limit, we now have all the numbers that will be used to mark off composites. The remainder of the work can be split into chunks and processed in parallel because for any new primes we find, we won't need to mark off their multiples in that chunk or any other anymore which effectively means each chunk is completely independent of the others. This then makes it a perfect candidate for parallelization.
+    /// The best version is intended to handle exceptionally large nth primes and parallelize it so it can find very large ones quickly. The idea is that every prime we find, we have to mark off multiples of it up to the estimated limit to eliminate all composites. The trick is that we only need to do this for primes up to the square root of the limit. Beyond that, all multiples will have already been marked off by smaller primes. Therefore, once we reach the square root of the limit, we now have all the numbers that will be used to mark off composites. The remainder of the work can be split into chunks and processed in parallel because for any new primes we find, we won't need to mark off their multiples in that chunk or any other anymore which effectively means each chunk is completely independent of the others. This then makes it a perfect candidate for parallelization.
     /// </para>
     /// </summary>
     public long NthPrime( long n )
@@ -162,7 +162,7 @@ public class SieveImplementation : ISieve
 
     /// <summary>
     /// Version 2.0<br/>
-    /// This version is intended to handle exceptionally large nth primes without requiring 128-bit integers.
+    /// This version is intended to handle exceptionally large nth primes.
     /// </summary>
     //public long NthPrime( long n )
     //{
@@ -382,5 +382,6 @@ public class SieveImplementation : ISieve
 
     //    return counter;
     //}
+
 
 }
